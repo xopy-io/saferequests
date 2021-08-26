@@ -14,11 +14,9 @@ with open(os.path.join(here, 'saferequests', '__version__.py'),
 with open('README.md', 'r', 'utf-8') as f:
     readme = f.read()
 
-with open('requirements.txt', 'r', 'utf-8') as f:
-    requires = f.readlines()
 
 packages = ['saferequests']
-requires  = [r.replace('\r','').replace('\n','') for r in requires]
+requires  = ['requests>=2.10.0']
 setup(
     name=about['__title__'],
     version=about['__version__'],
@@ -35,5 +33,17 @@ setup(
     python_requires=">=3.5",
     install_requires=requires,
     license=about['__license__'],
-    zip_safe=False
+    zip_safe=False,
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'Natural Language :: English',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9'
+        ]
     )
