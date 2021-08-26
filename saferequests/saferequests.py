@@ -3,6 +3,9 @@ import time
 from typing import List, Union, Tuple
 import logging
 from datetime import datetime, timedelta
+from collections.abc import Mapping
+from requests.structures import CaseInsensitiveDict
+from urllib.parse import parse_qs, urlparse
 
 DEFAULT_EXCEPTIONS = (requests.exceptions.ConnectionError,
                       requests.exceptions.Timeout)
@@ -30,6 +33,46 @@ __all__ = ['SafeRequests',
            'DEFAULT_MAX_EXP_BACKOFF'
            ]
 
+def paramstodict(params):
+    if isinstance(params,dict):
+        return dict(params)
+    elif isinstance(params,list):
+        return {v[0]:v[1] for v in params}
+    elif isinstance(params,(str,bytes)):
+        if isinstance(params,bytes):
+            decoded = params.decode('utf8')
+        else:
+            decoded = params
+
+        new_params = dict()
+        for k,v in parse_qs(decoded).items():
+            if isinstance(v,list) and len(v)==1:
+                new_params[k] = v[0]
+            else:
+                new_params[k] = v
+        return new_params
+        
+def mergesettings(request_setting,persistant_setting,setting_type):
+    if not persistant_setting:
+        return request_setting
+    if not request_setting:
+        return persistant_setting
+    if setting_type == 'auth':
+        return request_setting
+    elif setting_type == 'headers':
+        merged_settings = CaseInsensitiveDict(persistant_setting)
+        merged_settings.update(request_setting)
+    elif setting_type == 'params':
+        merged_settings = paramstodict(persistant_setting)
+        merged_settings.update(paramstodict(request_setting))
+
+    _merged_settings = {k:v for (k, v) in merged_settings.items() if v is not None}
+    del merged_settings
+    return _merged_settings
+                               
+            
+        
+    
 class SafeSession(requests.sessions.Session):
     """
     Create a SafeSession object which wraps requests.sessions.Session.
@@ -156,44 +199,66 @@ class SafeSession(requests.sessions.Session):
         Constructs and sends a :class:`Request <Request>`
         but will use parameters defined when object of
         :class:`SafeSession <SafeSession>` is created
-        
-            :param method: method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
-            :param url: URL for the new :class:`Request` object.
-            :param params: (optional) Dictionary, list of tuples or bytes to send
-                in the query string for the :class:`Request`.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) A JSON serializable Python object to send in the body of the :class:`Request`.
-            :param headers: (optional) Dictionary of HTTP Headers to send with the :class:`Request`.
-            :param cookies: (optional) Dict or CookieJar object to send with the :class:`Request`.
-            :param files: (optional) Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
-                ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
-                or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
-                defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
-                to add for the file.
-            :param auth: (optional) Auth tuple to enable Basic/Digest/Custom HTTP Auth.
-            :param timeout: (optional) How many seconds to wait for the server to send data
-                before giving up, as a float, or a :ref:`(connect timeout, read
-                timeout) <timeouts>` tuple.
-            :type timeout: float or tuple
-            :param allow_redirects: (optional) Boolean. Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection. Defaults to ``True``.
-            :type allow_redirects: bool
-            :param proxies: (optional) Dictionary mapping protocol to the URL of the proxy.
-            :param verify: (optional) Either a boolean, in which case it controls whether we verify
+        parameters
+        ----------
+            method :: str
+                method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
+            url :: str
+                URL for the new :class:`Request` object.
+            kwargs
+                kwargs accepted by requests.sessions.Session.request
+            kwargs accpeted
+            ---------------
+                params :: (optional)
+                    Dictionary, list of tuples or bytes to send
+                    in the query string for the :class:`Request`.
+                data :: (optional)
+                    Dictionary, list of tuples, bytes, or file-like
+                    object to send in the body of the :class:`Request`.
+                json :: (optional)
+                    A JSON serializable Python object to send in the body of the :class:`Request`.
+                headers :: (optional)
+                    Dictionary of HTTP Headers to send with the :class:`Request`.
+                cookies :: (optional)
+                    Dict or CookieJar object to send with the :class:`Request`.
+                files :: (optional)
+                    Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
+                    ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
+                    or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
+                    defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
+                    to add for the file.
+                auth :: (optional)
+                    Auth tuple to enable Basic/Digest/Custom HTTP Auth.
+                timeout :: (optional)
+                    How many seconds to wait for the server to send data
+                    before giving up, as a float, or a :ref:`(connect timeout, read
+                    timeout) <timeouts>` tuple.
+                allow_redirects :: (optional)
+                    Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection.
+                    Defaults to ``True``.
+                proxies :: (optional)
+                    Dictionary mapping protocol to the URL of the proxy.
+                verify :: (optional)
+                    Either a boolean, in which case it controls whether we verify
                     the server's TLS certificate, or a string, in which case it must be a path
                     to a CA bundle to use. Defaults to ``True``.
-            :param stream: (optional) if ``False``, the response content will be immediately downloaded.
-            :param cert: (optional) if String, path to ssl client cert file (.pem). If Tuple, ('cert', 'key') pair.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
-            Usage::
-        
-              >>> import saferequests
-              >>> sf = saferequests.SafeSession(retry_delay=5,retry_limit=5)
-              >>> req = sf.get('https://google.com')
-              >>> req
-              <Response [200]>
+                stream :: (optional)
+                    If ``False``, the response content will be immediately downloaded.
+                cert :: (optional)
+                    string path to ssl client cert file (.pem) or Tuple ('cert', 'key') pair.
+        return
+        ------
+            class:`Response <Response>` object
+        usage
+        -----    
+            >>> import saferequests
+            >>> sf = saferequests.SafeSession(retry_delay=5,retry_limit=5)
+            >>> req = sf.get('https://google.com')
+            >>> req
+            <Response [200]>
         """
+
+        
         count = self.retry_limit
         retry_delay = self.retry_delay
         url_str = url
@@ -203,9 +268,9 @@ class SafeSession(requests.sessions.Session):
             timeout_error = None
             try:
                 response = super().request(method = method,
-                                    url = url,
-                                    **kwargs
-                                    )
+                                           url = url,
+                                           **kwargs
+                                           )
                 end = datetime.now()
             except retry_exception_codes as e:
                 if self.retry_exception:
@@ -240,97 +305,119 @@ class SafeSession(requests.sessions.Session):
     def get(self, url, params=None, **kwargs):
         """
         Sends a GET request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param params: (optional) Dictionary, list of tuples or bytes to send
-                in the query string for the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            params :: (optional)
+                Dictionary, list of tuples or bytes to send
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("get", url, params=params, **kwargs)
 
     def options(self, url, **kwargs):
         """
         Sends an OPTIONS request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("options", url, **kwargs)
 
     def head(self, url, **kwargs):
         """
         Sends a HEAD request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes. If
-                `allow_redirects` is not provided, it will be set to `False` (as
-                opposed to the default :meth:`request` behavior).
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """    
         return self.request("options", url, **kwargs)
 
     def post(self, url, data=None, json=None, **kwargs):
         """
         Sends a POST request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("post", url, data=data, json=json, **kwargs)
     
     def put(self, url, data=None, **kwargs):
         """
         Sends a PUT request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("put", url, data=data, **kwargs)
 
     def patch(self, url, data=None, **kwargs):
         """
         Sends a PATCH request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("patch", url, data=data, **kwargs)
 
     def delete(self, url, **kwargs):
         """
         Sends a PATCH request with retry parameters defined when object of
-            :class:`SafeSession <SafeSession>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("delete", url, **kwargs)
                  
@@ -406,7 +493,8 @@ class SafeRequests:
                   retry_codes : List[int] = DEFAULT_CODES,
                   exp_backoff : bool = DEFAULT_EXP_BACKOFF,
                   max_exp_backoff : int = DEFAULT_MAX_EXP_BACKOFF,
-                  persistant_params : dict = dict(),
+                  persistant_params : Union[
+                      dict,List[Tuple],str,bytes] = dict(),
                   persistant_headers : dict = dict(),
                   persistant_auth = None,
                   retry_exception : bool = False,
@@ -498,50 +586,75 @@ class SafeRequests:
         but will use parameters defined when object of
         :class:`SafeRequests <SafeRequests>` is created
         
-            :param method: method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
-            :param url: URL for the new :class:`Request` object.
-            :param params: (optional) Dictionary, list of tuples or bytes to send
-                in the query string for the :class:`Request`.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) A JSON serializable Python object to send in the body of the :class:`Request`.
-            :param headers: (optional) Dictionary of HTTP Headers to send with the :class:`Request`.
-            :param cookies: (optional) Dict or CookieJar object to send with the :class:`Request`.
-            :param files: (optional) Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
-                ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
-                or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
-                defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
-                to add for the file.
-            :param auth: (optional) Auth tuple to enable Basic/Digest/Custom HTTP Auth.
-            :param timeout: (optional) How many seconds to wait for the server to send data
-                before giving up, as a float, or a :ref:`(connect timeout, read
-                timeout) <timeouts>` tuple.
-            :type timeout: float or tuple
-            :param allow_redirects: (optional) Boolean. Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection. Defaults to ``True``.
-            :type allow_redirects: bool
-            :param proxies: (optional) Dictionary mapping protocol to the URL of the proxy.
-            :param verify: (optional) Either a boolean, in which case it controls whether we verify
+        parameters
+        ----------
+            method :: str
+                method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
+            url :: str
+                URL for the new :class:`Request` object.
+            kwargs
+                kwargs accepted by requests.sessions.Session.request
+            kwargs accpeted
+            ---------------
+                params :: dict (optional)
+                    Dictionary, list of tuples or bytes to send
+                    in the query string for the :class:`Request`.
+                data :: (optional)
+                    Dictionary, list of tuples, bytes, or file-like
+                    object to send in the body of the :class:`Request`.
+                json ::  dict (optional)
+                    A JSON serializable Python object to send in the body of the :class:`Request`.
+                headers :: (optional)
+                    Dictionary of HTTP Headers to send with the :class:`Request`.
+                cookies :: (optional)
+                    Dict or CookieJar object to send with the :class:`Request`.
+                files :: (optional)
+                    Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
+                    ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
+                    or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
+                    defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
+                    to add for the file.
+                auth :: (optional)
+                    Auth tuple to enable Basic/Digest/Custom HTTP Auth.
+                timeout :: Union[float,tuple] (optional)
+                    How many seconds to wait for the server to send data
+                    before giving up, as a float, or a :ref:`(connect timeout, read
+                    timeout) <timeouts>` tuple.
+                allow_redirects :: bool (optional)
+                    Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection.
+                    Defaults to ``True``.
+                proxies :: dict (optional)
+                    Dictionary mapping protocol to the URL of the proxy.
+                verify :: Union[bool,str] (optional)
+                    Either a boolean, in which case it controls whether we verify
                     the server's TLS certificate, or a string, in which case it must be a path
                     to a CA bundle to use. Defaults to ``True``.
-            :param stream: (optional) if ``False``, the response content will be immediately downloaded.
-            :param cert: (optional) if String, path to ssl client cert file (.pem). If Tuple, ('cert', 'key') pair.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
-            Usage::
-        
-              >>> import saferequests
-              >>> sf = saferequests.SafeRequests(retry_delay=5,retry_limit=5)
-              >>> req = sf.get('https://google.com')
-              >>> req
-              <Response [200]>
+                stream :: bool (optional)
+                    If ``False``, the response content will be immediately downloaded.
+                cert :: Union[str,tuple] (optional)
+                    string path to ssl client cert file (.pem) or Tuple ('cert', 'key') pair.
+        return
+        ------
+            class:`Response <Response>` object
+
+        usage
+        -----
+            >>> import saferequests
+            >>> sf = saferequests.SafeRequests(retry_delay=5,retry_limit=5)
+            >>> req = sf.get('https://google.com')
+            >>> req
+            <Response [200]>
         """
         count = self.retry_limit
         retry_delay = self.retry_delay
         url_str = url
-        kwargs['params'] = {**self.persistant_params,
-                            **kwargs.get('params',dict())}
-        kwargs['headers'] = {**self.persistant_headers,
-                             **kwargs.get('headers',dict())}
+        
+        kwargs['params'] = mergesettings(kwargs.get('params',dict()),
+                                          self.persistant_params,
+                                          'params')
+        kwargs['headers'] = mergesettings(kwargs.get('headers',dict()),
+                                          self.persistant_headers,
+                                          'headers')
         kwargs.setdefault('auth',self.persistant_auth)
         start = datetime.now()
         while count>=0:
@@ -580,20 +693,24 @@ class SafeRequests:
                 logging.log(DEFAULT_LOG_LEVEL,f'{url_str} - response recieved '
                             f'{response.status_code}. '
                             'returning response')
-                r.elapsed = end - start
+                response.elapsed = end - start
                 return response
     
     def get(self, url, params=None, **kwargs):
         """
-        Sends a GET request with retry parameters defined when object of
-            :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param params: (optional) Dictionary, list of tuples or bytes to send
-                in the query string for the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        Sends a GET request using retry parameters defined as object of
+        :class:`SafeRequests <SafeRequests>` is created
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            params :: (optional)
+                Dictionary, list of tuples or bytes to send
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("get", url, params=params, **kwargs)
 
@@ -601,11 +718,15 @@ class SafeRequests:
         """
         Sends an OPTIONS request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("options", url, **kwargs)
 
@@ -613,28 +734,37 @@ class SafeRequests:
         """
         Sends a HEAD request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes. If
-                `allow_redirects` is not provided, it will be set to `False` (as
-                opposed to the default :meth:`request` behavior).
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
-        """    
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            params :: (optional)
+                Dictionary, list of tuples or bytes to send
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
+        """
         return self.request("options", url, **kwargs)
 
     def post(self, url, data=None, json=None, **kwargs):
         """
         Sends a POST request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("post", url, data=data, json=json, **kwargs)
     
@@ -642,14 +772,19 @@ class SafeRequests:
         """
         Sends a PUT request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("put", url, data=data, **kwargs)
 
@@ -657,14 +792,19 @@ class SafeRequests:
         """
         Sends a PATCH request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-                object to send in the body of the :class:`Request`.
-            :param json: (optional) json data to send in the body of the :class:`Request`.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+            json :: (optional)
+                json data to send in the body of the :class:`Request`.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("patch", url, data=data, **kwargs)
 
@@ -672,11 +812,15 @@ class SafeRequests:
         """
         Sends a PATCH request with retry parameters defined when object of
             :class:`SafeRequests <SafeRequests>` is created
-        
-            :param url: URL for the new :class:`Request` object.
-            :param \*\*kwargs: Optional arguments that ``request`` takes.
-            :return: :class:`Response <Response>` object
-            :rtype: requests.Response
+        parameters
+        ----------
+            url :: str
+                URL for the new :class:`Request` object.
+            \*\*kwargs :: (optional)
+                Optional arguments that ``request`` takes.
+        return
+        ------
+            `Response <Response>` object
         """
         return self.request("delete", url, **kwargs)
     
@@ -689,54 +833,79 @@ def request(method, url, **kwargs):
     Constructs and sends a :class:`Request <Request>`
     but will use default retry options
     
-        :param method: method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
-        :param url: URL for the new :class:`Request` object.
-        :param params: (optional) Dictionary, list of tuples or bytes to send
-            in the query string for the :class:`Request`.
-        :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-            object to send in the body of the :class:`Request`.
-        :param json: (optional) A JSON serializable Python object to send in the body of the :class:`Request`.
-        :param headers: (optional) Dictionary of HTTP Headers to send with the :class:`Request`.
-        :param cookies: (optional) Dict or CookieJar object to send with the :class:`Request`.
-        :param files: (optional) Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
-            ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
-            or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
-            defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
-            to add for the file.
-        :param auth: (optional) Auth tuple to enable Basic/Digest/Custom HTTP Auth.
-        :param timeout: (optional) How many seconds to wait for the server to send data
-            before giving up, as a float, or a :ref:`(connect timeout, read
-            timeout) <timeouts>` tuple.
-        :type timeout: float or tuple
-        :param allow_redirects: (optional) Boolean. Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection. Defaults to ``True``.
-        :type allow_redirects: bool
-        :param proxies: (optional) Dictionary mapping protocol to the URL of the proxy.
-        :param verify: (optional) Either a boolean, in which case it controls whether we verify
+    parameters
+    ----------
+        method :: str
+            method for the new :class:`Request` object: ``GET``, ``OPTIONS``, ``HEAD``, ``POST``, ``PUT``, ``PATCH``, or ``DELETE``.
+        url :: str
+            URL for the new :class:`Request` object.
+        kwargs
+            kwargs accepted by requests.sessions.Session.request
+        kwargs accpeted
+        ---------------
+            params :: dict (optional)
+                Dictionary, list of tuples or bytes to send
+                in the query string for the :class:`Request`.
+            data :: (optional)
+                Dictionary, list of tuples, bytes, or file-like
+                object to send in the body of the :class:`Request`.
+            json ::  dict (optional)
+                A JSON serializable Python object to send in the body of the :class:`Request`.
+            headers :: (optional)
+                Dictionary of HTTP Headers to send with the :class:`Request`.
+            cookies :: (optional)
+                Dict or CookieJar object to send with the :class:`Request`.
+            files :: (optional)
+                Dictionary of ``'name': file-like-objects`` (or ``{'name': file-tuple}``) for multipart encoding upload.
+                ``file-tuple`` can be a 2-tuple ``('filename', fileobj)``, 3-tuple ``('filename', fileobj, 'content_type')``
+                or a 4-tuple ``('filename', fileobj, 'content_type', custom_headers)``, where ``'content-type'`` is a string
+                defining the content type of the given file and ``custom_headers`` a dict-like object containing additional headers
+                to add for the file.
+            auth :: (optional)
+                Auth tuple to enable Basic/Digest/Custom HTTP Auth.
+            timeout :: Union[float,tuple] (optional)
+                How many seconds to wait for the server to send data
+                before giving up, as a float, or a :ref:`(connect timeout, read
+                timeout) <timeouts>` tuple.
+            allow_redirects :: bool (optional)
+                Enable/disable GET/OPTIONS/POST/PUT/PATCH/DELETE/HEAD redirection.
+                Defaults to ``True``.
+            proxies :: dict (optional)
+                Dictionary mapping protocol to the URL of the proxy.
+            verify :: Union[bool,str] (optional)
+                Either a boolean, in which case it controls whether we verify
                 the server's TLS certificate, or a string, in which case it must be a path
                 to a CA bundle to use. Defaults to ``True``.
-        :param stream: (optional) if ``False``, the response content will be immediately downloaded.
-        :param cert: (optional) if String, path to ssl client cert file (.pem). If Tuple, ('cert', 'key') pair.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
-        Usage::
-    
-          >>> import saferequests
-          >>> req = saferequests.request('GET', 'https://httpbin.org/get')
-          >>> req
-          <Response [200]>
+            stream :: bool (optional)
+                If ``False``, the response content will be immediately downloaded.
+            cert :: Union[str,tuple] (optional)
+                string path to ssl client cert file (.pem) or Tuple ('cert', 'key') pair.
+    return
+    ------
+        class:`Response <Response>` object
+    usage
+    -----
+        >>> import saferequests
+        >>> req = saferequests.request('GET', 'https://httpbin.org/get')
+        >>> req
+       <Response [200]>
     """
     return root.request(method=method, url=url, **kwargs)
 
 def get(url, params=None, **kwargs):
     """
     Sends a GET request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param params: (optional) Dictionary, list of tuples or bytes to send
-            in the query string for the :class:`Request`.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        params :: (optional)
+            Dictionary, list of tuples or bytes to send
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
 
     return request('get', url, params=params, **kwargs)
@@ -745,24 +914,30 @@ def get(url, params=None, **kwargs):
 def options(url, **kwargs):
     """
     Sends an OPTIONS request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
     return request('options', url, **kwargs)
 
 def head(url, **kwargs):
     """
     Sends a HEAD request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param \*\*kwargs: Optional arguments that ``request`` takes. If
-            `allow_redirects` is not provided, it will be set to `False` (as
-            opposed to the default :meth:`request` behavior).
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """    
     return request('head', url, **kwargs)
 
@@ -770,14 +945,19 @@ def head(url, **kwargs):
 def post(url, data=None, json=None, **kwargs):
     """
     Sends a POST request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-            object to send in the body of the :class:`Request`.
-        :param json: (optional) json data to send in the body of the :class:`Request`.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        data :: (optional)
+            Dictionary, list of tuples, bytes, or file-like
+        json :: (optional)
+            json data to send in the body of the :class:`Request`.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
     return request('post', url, data=data, json=json, **kwargs)
 
@@ -785,26 +965,38 @@ def post(url, data=None, json=None, **kwargs):
 def put(url, data=None, **kwargs):
     """
     Sends a PUT request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-            object to send in the body of the :class:`Request`.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        data :: (optional)
+            Dictionary, list of tuples, bytes, or file-like
+        json :: (optional)
+            json data to send in the body of the :class:`Request`.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
     return request('put', url, data=data, **kwargs)
 
 def patch(url, data=None, **kwargs):
     """
     Sends a PATCH request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param data: (optional) Dictionary, list of tuples, bytes, or file-like
-            object to send in the body of the :class:`Request`.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        data :: (optional)
+            Dictionary, list of tuples, bytes, or file-like
+        json :: (optional)
+            json data to send in the body of the :class:`Request`.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
     return request('patch', url, data=data, **kwargs)
 
@@ -812,10 +1004,14 @@ def patch(url, data=None, **kwargs):
 def delete(url, **kwargs):
     """
     Sends a PATCH request with default retry params.
-    
-        :param url: URL for the new :class:`Request` object.
-        :param \*\*kwargs: Optional arguments that ``request`` takes.
-        :return: :class:`Response <Response>` object
-        :rtype: requests.Response
+    parameters
+    ----------
+        url :: str
+            URL for the new :class:`Request` object.
+        \*\*kwargs :: (optional)
+            Optional arguments that ``request`` takes.
+    return
+    ------
+        `Response <Response>` object
     """
     return request('delete', url, **kwargs)
