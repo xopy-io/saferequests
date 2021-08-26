@@ -1,8 +1,8 @@
 __title__ = 'saferequests'
 __description__ = 'requests with retries in build'
 __url__ = 'https://github.com/xopy-io/xopy'
-__version__ = '0.0.2'
-__build__ = 0x000002
+__version__ = '0.0.3'
+__build__ = 0x000003
 __author__ = 'siddharth chabra'
 __author_email__ = 'sid@xopy.io'
 __license__ = 'MIT'
