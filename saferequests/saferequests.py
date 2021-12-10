@@ -14,7 +14,7 @@ DEFAULT_LIMIT = 10
 DEFAULT_CODES = [429] + list(range(500,512))
 DEFAULT_EXP_BACKOFF = False
 DEFAULT_MAX_EXP_BACKOFF = 60
-DEFAULT_LOG_LEVEL = logging.INFO
+
 
 __all__ = ['SafeRequests',
            'SafeSession',
@@ -26,11 +26,6 @@ __all__ = ['SafeRequests',
            'put',
            'patch',
            'delete',
-           'DEFAULT_DELAY',
-           'DEFAULT_LIMIT',
-           'DEFAULT_CODES',
-           'DEFAULT_EXP_BACKOFF',
-           'DEFAULT_MAX_EXP_BACKOFF'
            ]
 
 def paramstodict(params):
@@ -261,7 +256,17 @@ class SafeSession(requests.sessions.Session):
         
         count = self.retry_limit
         retry_delay = self.retry_delay
-        url_str = url
+        url_str += '&' if '?' in url_str else '?'
+        joiner = []
+        for k,v in kwargs['params'].items():
+            if isinstance(v,(list,tuple)):
+                for vv in v:
+                    joiner.append(f'{k}={vv}')
+            else:
+                joiner.append(f'{k}={v}')
+        url_str += '&'.join(joiner)
+        del joiner
+        
         start = datetime.now()
         while count>=0:
             timed_out = False
@@ -287,7 +292,7 @@ class SafeSession(requests.sessions.Session):
                               f'connection timedout max reties reached')
                 raise timeout_error
             elif response.status_code in self.retry_codes and count:
-                logging.debug(f'{url_str} - response recieved '
+                logging.debug(f'{response.request.url} - response recieved '
                               f'{response.status_code}. Retrying')
                 count = count -1
                 time.sleep(retry_delay)
@@ -295,10 +300,10 @@ class SafeSession(requests.sessions.Session):
                     retry_delay = min(retry_delay * 2,self.max_exp_backoff)
             
             else:
-                logging.log(DEFAULT_LOG_LEVEL,f'{url_str} - response recieved '
-                            f'{response.status_code}. '
-                            'returning response')
                 response.elapsed = end - start
+                logging.info(f'{response.request.url} - '
+                             f'response_status  {response.status_code}. In '
+                             f'{response.elapsed.total_seconds():.2f} seconds')
                 return response
 
 
@@ -506,8 +511,8 @@ class SafeRequests:
         self.__retry_codes__ = retry_codes or list()
         self.__exp_backoff__ = exp_backoff
         self.__max_exp_backoff__ = max_exp_backoff
-        self.__persistant_params__ = persistant_params
-        self.__persistant_headers__ = persistant_headers
+        self.__persistant_params__ = persistant_params or dict()
+        self.__persistant_headers__ = persistant_headers or dict()
         self.__persistant_auth__ = persistant_auth
         self.__retry_exception__ = retry_exception
         self.__retry_exception_codes__ = retry_exception_codes
@@ -657,6 +662,16 @@ class SafeRequests:
                                           'headers')
         kwargs.setdefault('auth',self.persistant_auth)
         start = datetime.now()
+        url_str += '&' if '?' in url_str else '?'
+        joiner = []
+        for k,v in kwargs['params'].items():
+            if isinstance(v,(list,tuple)):
+                for vv in v:
+                    joiner.append(f'{k}={vv}')
+            else:
+                joiner.append(f'{k}={v}')
+        url_str += '&'.join(joiner)
+        del joiner        
         while count>=0:
             timed_out = False
             timeout_error = None
@@ -666,6 +681,7 @@ class SafeRequests:
                                     url = url,
                                     **kwargs
                                     )
+                url_str = response.request.url
                 end = datetime.now()
             except retry_exception_codes as e:
                 if self.retry_exception:
@@ -682,7 +698,7 @@ class SafeRequests:
                               f'connection timedout max reties reached')
                 raise timeout_error
             elif response.status_code in self.retry_codes and count:
-                logging.debug(f'{url_str} - response recieved '
+                logging.debug(f'{response.request.url} - response recieved '
                               f'{response.status_code}. Retrying')
                 count = count -1
                 time.sleep(retry_delay)
@@ -690,10 +706,10 @@ class SafeRequests:
                     retry_delay = min(retry_delay * 2,self.max_exp_backoff)
             
             else:
-                logging.log(DEFAULT_LOG_LEVEL,f'{url_str} - response recieved '
-                            f'{response.status_code}. '
-                            'returning response')
                 response.elapsed = end - start
+                logging.info(f'{response.request.url} - '
+                             f'response_status  {response.status_code}. In '
+                             f'{response.elapsed.total_seconds():.2f} seconds')
                 return response
     
     def get(self, url, params=None, **kwargs):
@@ -825,13 +841,14 @@ class SafeRequests:
         return self.request("delete", url, **kwargs)
     
 
-root = SafeRequests()
+SafeRequests.root = SafeRequests()
 
 def request(method, url, **kwargs):
     """
     Wrapper around the requests.request function which
     Constructs and sends a :class:`Request <Request>`
-    but will use default retry options
+    but will use default retry options using root object
+    SafeRequests.root
     
     parameters
     ----------
@@ -894,7 +911,8 @@ def request(method, url, **kwargs):
 
 def get(url, params=None, **kwargs):
     """
-    Sends a GET request with default retry params.
+    Sends a GET request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -913,7 +931,8 @@ def get(url, params=None, **kwargs):
 
 def options(url, **kwargs):
     """
-    Sends an OPTIONS request with default retry params.
+    Sends an OPTIONS request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -928,7 +947,8 @@ def options(url, **kwargs):
 
 def head(url, **kwargs):
     """
-    Sends a HEAD request with default retry params.
+    Sends a HEAD request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -944,7 +964,8 @@ def head(url, **kwargs):
 
 def post(url, data=None, json=None, **kwargs):
     """
-    Sends a POST request with default retry params.
+    Sends a POST request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -964,7 +985,8 @@ def post(url, data=None, json=None, **kwargs):
 
 def put(url, data=None, **kwargs):
     """
-    Sends a PUT request with default retry params.
+    Sends a PUT request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -983,7 +1005,8 @@ def put(url, data=None, **kwargs):
 
 def patch(url, data=None, **kwargs):
     """
-    Sends a PATCH request with default retry params.
+    Sends a PATCH request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
@@ -1003,7 +1026,8 @@ def patch(url, data=None, **kwargs):
 
 def delete(url, **kwargs):
     """
-    Sends a PATCH request with default retry params.
+    Sends a PATCH request with default retry params using root object
+    SafeRequests.root.
     parameters
     ----------
         url :: str
